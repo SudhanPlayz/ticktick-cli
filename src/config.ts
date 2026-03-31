@@ -25,16 +25,25 @@ export interface RuntimeOverrides extends Partial<StoredConfig> {
   configFile?: string;
 }
 
-export function defaultConfigFilePath(): string {
-  const appData = process.env.APPDATA;
+export interface DefaultConfigPathOptions {
+  platform?: NodeJS.Platform;
+  appData?: string;
+  homeDir?: string;
+}
 
-  if (process.platform === "win32" && appData) {
-    return path.join(appData, "ticktick-cli", "config.json");
+export function defaultConfigFilePath(options: DefaultConfigPathOptions = {}): string {
+  const platform = options.platform ?? process.platform;
+  const appData = options.appData ?? process.env.APPDATA;
+  const homeDir = options.homeDir ?? os.homedir();
+  const pathModule = platform === "win32" ? path.win32 : path.posix;
+
+  if (platform === "win32" && appData) {
+    return pathModule.join(appData, "ticktick-cli", "config.json");
   }
 
-  if (process.platform === "darwin") {
-    return path.join(
-      os.homedir(),
+  if (platform === "darwin") {
+    return pathModule.join(
+      homeDir,
       "Library",
       "Application Support",
       "ticktick-cli",
@@ -42,7 +51,7 @@ export function defaultConfigFilePath(): string {
     );
   }
 
-  return path.join(os.homedir(), ".config", "ticktick-cli", "config.json");
+  return pathModule.join(homeDir, ".config", "ticktick-cli", "config.json");
 }
 
 export async function loadStoredConfig(configFile: string): Promise<StoredConfig> {

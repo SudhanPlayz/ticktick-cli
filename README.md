@@ -1,11 +1,13 @@
-# TickTick CLI
+# TickTick CLI v1
 
-A simple TypeScript CLI wrapper for the TickTick Open API documented at:
+A TypeScript CLI wrapper for the TickTick Open API documented at:
 
 - https://developer.ticktick.com/
 - https://developer.ticktick.com/docs#/openapi
 
-This wrapper covers the documented OAuth flow plus every documented task and project endpoint.
+`v1.0.0` covers the documented OAuth flow plus every documented task and project endpoint.
+
+The CLI is available as both `ticktick` and the short alias `tt`.
 
 ## What it covers
 
@@ -19,6 +21,10 @@ This wrapper covers the documented OAuth flow plus every documented task and pro
 
 ## Install
 
+Requires Node.js `18+`.
+
+Install from the local repo:
+
 ```bash
 npm install
 npm run build
@@ -27,7 +33,7 @@ npm run build
 Run locally with:
 
 ```bash
-node dist/cli.js --help
+node dist/bin.js --help
 ```
 
 Or install the built CLI globally from this directory:
@@ -35,7 +41,18 @@ Or install the built CLI globally from this directory:
 ```bash
 npm install -g .
 ticktick --help
+tt --help
 ```
+
+Once published to npm, install it with:
+
+```bash
+npm install -g ticktick-cli
+ticktick --help
+tt --help
+```
+
+All command examples below use `ticktick`, but `tt` works the same way.
 
 ## Configure
 
@@ -58,6 +75,12 @@ TICKTICK_ACCESS_TOKEN=...
 TICKTICK_API_BASE_URL=https://api.ticktick.com
 TICKTICK_AUTH_BASE_URL=https://ticktick.com
 TICKTICK_CONFIG_FILE=/custom/path/config.json
+```
+
+Default local redirect URI:
+
+```bash
+http://127.0.0.1:18463/callback
 ```
 
 You can also persist config values:
@@ -179,6 +202,22 @@ Send a raw request to a full URL without bearer auth:
 ```bash
 ticktick request POST https://httpbin.org/post --no-auth --json '{"hello":"world"}'
 ```
+
+## Development
+
+Run the normal test suite:
+
+```bash
+npm test
+```
+
+Run the enforced coverage check:
+
+```bash
+npm run coverage
+```
+
+`npm run coverage` currently enforces `100%` line, branch, and function coverage on the published runtime files.
 
 ## Notes
 

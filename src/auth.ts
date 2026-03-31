@@ -7,6 +7,12 @@ import type { RuntimeConfig, TokenResponse } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
+export interface OpenBrowserOptions {
+  platform?: NodeJS.Platform;
+  execFile?: (file: string, args: string[]) => Promise<unknown>;
+  stderr?: (text: string) => void;
+}
+
 export function buildAuthorizationUrl(
   config: RuntimeConfig,
   state: string = randomUUID(),
@@ -52,7 +58,16 @@ export async function exchangeAuthorizationCode(
   });
 
   const raw = await response.text();
-  const parsed = raw.length > 0 ? JSON.parse(raw) : {};
+  let parsed: unknown = {};
+
+  if (raw.length > 0) {
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Token exchange returned invalid JSON: ${message}`);
+    }
+  }
 
   if (!response.ok) {
     throw new Error(
@@ -75,15 +90,25 @@ export function isLoopbackRedirect(redirectUri?: string): boolean {
   );
 }
 
+export function getOAuthCallbackBinding(
+  redirectUri: string,
+): { hostname: string; port: number; callbackPath: string } {
+  const redirect = new URL(redirectUri);
+
+  return {
+    hostname: redirect.hostname === "localhost" ? "127.0.0.1" : redirect.hostname,
+    port: Number.parseInt(redirect.port || "80", 10),
+    callbackPath: redirect.pathname,
+  };
+}
+
 export async function waitForOAuthCode(
   redirectUri: string,
   expectedState: string,
   timeoutMs = 120_000,
 ): Promise<string> {
   const redirect = new URL(redirectUri);
-  const hostname = redirect.hostname === "localhost" ? "127.0.0.1" : redirect.hostname;
-  const port = Number.parseInt(redirect.port || "80", 10);
-  const callbackPath = redirect.pathname || "/";
+  const { hostname, port, callbackPath } = getOAuthCallbackBinding(redirectUri);
 
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -92,7 +117,7 @@ export async function waitForOAuthCode(
     }, timeoutMs);
 
     const server = createServer((request, response) => {
-      const requestUrl = new URL(request.url ?? "/", redirect.origin);
+      const requestUrl = new URL(request.url!, redirect.origin);
 
       if (requestUrl.pathname !== callbackPath) {
         response.statusCode = 404;
@@ -137,21 +162,39 @@ export async function waitForOAuthCode(
   });
 }
 
-export async function openBrowser(url: string): Promise<void> {
+export async function openBrowser(
+  url: string,
+  options?: OpenBrowserOptions,
+): Promise<void> {
+  return openBrowserWith(url, options);
+}
+
+export async function openBrowserWith(
+  url: string,
+  options: OpenBrowserOptions = {},
+): Promise<void> {
+  const platform = options.platform ?? process.platform;
+  const run =
+    options.execFile ??
+    (async (file: string, args: string[]) => {
+      await execFileAsync(file, args);
+    });
+  const stderr = options.stderr ?? ((text: string) => process.stderr.write(text));
+
   try {
-    if (process.platform === "win32") {
-      await execFileAsync("cmd", ["/c", "start", "", url]);
+    if (platform === "win32") {
+      await run("cmd", ["/c", "start", "", url]);
       return;
     }
 
-    if (process.platform === "darwin") {
-      await execFileAsync("open", [url]);
+    if (platform === "darwin") {
+      await run("open", [url]);
       return;
     }
 
-    await execFileAsync("xdg-open", [url]);
+    await run("xdg-open", [url]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`Could not open a browser automatically: ${message}\n`);
+    stderr(`Could not open a browser automatically: ${message}\n`);
   }
 }

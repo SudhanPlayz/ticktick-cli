@@ -1,5 +1,9 @@
 import { readFile } from "node:fs/promises";
 
+export interface StdinLike extends AsyncIterable<Buffer | string> {
+  isTTY?: boolean;
+}
+
 export function mergeDefined<T extends Record<string, unknown>>(
   base: T,
   patch: Record<string, unknown>,
@@ -39,14 +43,14 @@ export function parseInteger(value: string): number {
   return parsed;
 }
 
-export async function maybeReadStdin(): Promise<string | undefined> {
-  if (process.stdin.isTTY) {
+export async function maybeReadStdin(input: StdinLike = process.stdin): Promise<string | undefined> {
+  if (input.isTTY) {
     return undefined;
   }
 
   const chunks: Buffer[] = [];
 
-  for await (const chunk of process.stdin) {
+  for await (const chunk of input) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
 
@@ -57,6 +61,7 @@ export async function maybeReadStdin(): Promise<string | undefined> {
 export async function loadJsonValue(
   inlineJson?: string,
   jsonFile?: string,
+  input: StdinLike = process.stdin,
 ): Promise<unknown> {
   let raw = inlineJson;
 
@@ -65,7 +70,7 @@ export async function loadJsonValue(
   }
 
   if (!raw) {
-    raw = await maybeReadStdin();
+    raw = await maybeReadStdin(input);
   }
 
   if (!raw) {
@@ -80,8 +85,11 @@ export async function loadJsonValue(
   }
 }
 
-export function printJson(value: unknown): void {
-  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+export function printJson(
+  value: unknown,
+  write: (text: string) => unknown = (text) => process.stdout.write(text),
+): void {
+  write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
 export function maskSecret(value?: string): string | undefined {

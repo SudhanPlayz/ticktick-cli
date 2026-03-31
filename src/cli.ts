@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import { Command } from "commander";
 
 import {
@@ -24,6 +22,7 @@ import type {
   RuntimeConfig,
   StoredConfig,
   Task,
+  TokenResponse,
 } from "./types.js";
 import {
   loadJsonValue,
@@ -51,6 +50,43 @@ type JsonOptions = {
   jsonFile?: string;
 };
 
+type TickTickClientLike = Pick<
+  TickTickClient,
+  | "getTask"
+  | "createTask"
+  | "updateTask"
+  | "completeTask"
+  | "deleteTask"
+  | "moveTasks"
+  | "listCompletedTasks"
+  | "filterTasks"
+  | "listProjects"
+  | "getProject"
+  | "getProjectData"
+  | "createProject"
+  | "updateProject"
+  | "deleteProject"
+  | "requestRaw"
+>;
+
+export interface CliDependencies {
+  buildAuthorizationUrl: typeof buildAuthorizationUrl;
+  exchangeAuthorizationCode: typeof exchangeAuthorizationCode;
+  isLoopbackRedirect: typeof isLoopbackRedirect;
+  loadJsonValue: typeof loadJsonValue;
+  loadStoredConfig: typeof loadStoredConfig;
+  maskSecret: typeof maskSecret;
+  mergeDefined: typeof mergeDefined;
+  openBrowser: typeof openBrowser;
+  printJson: typeof printJson;
+  resolveRuntimeConfig: typeof resolveRuntimeConfig;
+  saveStoredConfig: typeof saveStoredConfig;
+  validateService: typeof validateService;
+  waitForOAuthCode: typeof waitForOAuthCode;
+  createClient: (config: RuntimeConfig) => TickTickClientLike;
+  stderr: (text: string) => void;
+}
+
 const CONFIG_KEYS = new Set<keyof StoredConfig>([
   "service",
   "clientId",
@@ -62,30 +98,74 @@ const CONFIG_KEYS = new Set<keyof StoredConfig>([
   "authBaseUrl",
 ]);
 
-const program = new Command();
+export const defaultCliDependencies: CliDependencies = {
+  buildAuthorizationUrl,
+  exchangeAuthorizationCode,
+  isLoopbackRedirect,
+  loadJsonValue,
+  loadStoredConfig,
+  maskSecret,
+  mergeDefined,
+  openBrowser,
+  printJson,
+  resolveRuntimeConfig,
+  saveStoredConfig,
+  validateService,
+  waitForOAuthCode,
+  createClient: (config) => new TickTickClient(config),
+  stderr: (text) => process.stderr.write(text),
+};
 
-program
-  .name("ticktick")
-  .description("Simple CLI wrapper for the TickTick Open API")
-  .option("--config-file <path>", "Custom config file path")
-  .option("--service <service>", 'Service: "ticktick" or "dida365"')
-  .option("--api-base-url <url>", "Override the API base URL")
-  .option("--auth-base-url <url>", "Override the OAuth base URL")
-  .option("--access-token <token>", "Override the access token for a single command")
-  .option("--client-id <id>", "Override the OAuth client id")
-  .option("--client-secret <secret>", "Override the OAuth client secret")
-  .option("--redirect-uri <uri>", "Override the OAuth redirect URI")
-  .option("--scopes <scopes>", "Override the OAuth scopes");
+export function createProgram(
+  dependencies: CliDependencies = defaultCliDependencies,
+): Command {
+  const program = new Command();
 
-buildAuthCommands(program);
-buildConfigCommands(program);
-buildTaskCommands(program);
-buildProjectCommands(program);
-buildRequestCommand(program);
+  program
+    .name("ticktick")
+    .description("CLI wrapper for the TickTick Open API")
+    .option("--config-file <path>", "Custom config file path")
+    .option("--service <service>", 'Service: "ticktick" or "dida365"')
+    .option("--api-base-url <url>", "Override the API base URL")
+    .option("--auth-base-url <url>", "Override the OAuth base URL")
+    .option("--access-token <token>", "Override the access token for a single command")
+    .option("--client-id <id>", "Override the OAuth client id")
+    .option("--client-secret <secret>", "Override the OAuth client secret")
+    .option("--redirect-uri <uri>", "Override the OAuth redirect URI")
+    .option("--scopes <scopes>", "Override the OAuth scopes");
 
-program.parseAsync(process.argv).catch(handleError);
+  buildAuthCommands(program, dependencies);
+  buildConfigCommands(program, dependencies);
+  buildTaskCommands(program, dependencies);
+  buildProjectCommands(program, dependencies);
+  buildRequestCommand(program, dependencies);
 
-function buildAuthCommands(root: Command): void {
+  return program;
+}
+
+export async function main(
+  argv: string[] = process.argv,
+  dependencies: CliDependencies = defaultCliDependencies,
+): Promise<void> {
+  const program = createProgram(dependencies);
+
+  try {
+    await program.parseAsync(argv);
+  } catch (error) {
+    handleError(error, dependencies);
+  }
+}
+
+export function handleError(
+  error: unknown,
+  dependencies: Pick<CliDependencies, "stderr"> = defaultCliDependencies,
+): void {
+  const message = error instanceof Error ? error.message : String(error);
+  dependencies.stderr(`${message}\n`);
+  process.exitCode = 1;
+}
+
+function buildAuthCommands(root: Command, dependencies: CliDependencies): void {
   const auth = root.command("auth").description("OAuth and token management");
 
   auth
@@ -97,12 +177,12 @@ function buildAuthCommands(root: Command): void {
       const options = command.optsWithGlobals<CommonOptions>() as CommonOptions & {
         state?: string;
       };
-      const config = await resolveRuntimeConfig(runtimeOverrides(options));
+      const config = await dependencies.resolveRuntimeConfig(
+        runtimeOverrides(options, dependencies),
+      );
 
       requireClientId(config);
-
-      const result = buildAuthorizationUrl(config, options.state);
-      printJson(result);
+      dependencies.printJson(dependencies.buildAuthorizationUrl(config, options.state));
     });
 
   auth
@@ -115,14 +195,16 @@ function buildAuthCommands(root: Command): void {
         timeoutMs: number;
       };
 
-      const config = await resolveRuntimeConfig(runtimeOverrides(options));
+      const config = await dependencies.resolveRuntimeConfig(
+        runtimeOverrides(options, dependencies),
+      );
       requireClientCredentials(config);
 
-      const { url, state } = buildAuthorizationUrl(config);
-      process.stderr.write(`Authorize URL:\n${url}\n`);
+      const { url, state } = dependencies.buildAuthorizationUrl(config);
+      dependencies.stderr(`Authorize URL:\n${url}\n`);
 
-      if (!isLoopbackRedirect(config.redirectUri)) {
-        printJson({
+      if (!dependencies.isLoopbackRedirect(config.redirectUri)) {
+        dependencies.printJson({
           ok: false,
           reason:
             "redirect_uri is not a local HTTP callback. Open the URL above and then run `ticktick auth exchange <code>`.",
@@ -130,14 +212,18 @@ function buildAuthCommands(root: Command): void {
         return;
       }
 
-      const codePromise = waitForOAuthCode(config.redirectUri!, state, options.timeoutMs);
-      await openBrowser(url);
+      const codePromise = dependencies.waitForOAuthCode(
+        config.redirectUri!,
+        state,
+        options.timeoutMs,
+      );
+      await dependencies.openBrowser(url);
 
       const code = await codePromise;
-      const token = await exchangeAuthorizationCode(config, code);
-      await persistConfig(config, token.access_token);
+      const token = await dependencies.exchangeAuthorizationCode(config, code);
+      await persistConfig(config, token, dependencies);
 
-      printJson(token);
+      dependencies.printJson(token);
     });
 
   auth
@@ -146,16 +232,16 @@ function buildAuthCommands(root: Command): void {
     .action(async (...args: unknown[]) => {
       const command = args.at(-1) as Command;
       const [code] = args as [string, Command];
-      const config = await resolveRuntimeConfig(
-        runtimeOverrides(command.optsWithGlobals<CommonOptions>()),
+      const config = await dependencies.resolveRuntimeConfig(
+        runtimeOverrides(command.optsWithGlobals<CommonOptions>(), dependencies),
       );
 
       requireClientCredentials(config);
 
-      const token = await exchangeAuthorizationCode(config, code);
-      await persistConfig(config, token.access_token);
+      const token = await dependencies.exchangeAuthorizationCode(config, code);
+      await persistConfig(config, token, dependencies);
 
-      printJson(token);
+      dependencies.printJson(token);
     });
 
   auth
@@ -167,16 +253,22 @@ function buildAuthCommands(root: Command): void {
       const options = command.optsWithGlobals<CommonOptions>() as CommonOptions & {
         showSecrets?: boolean;
       };
-      const config = await resolveRuntimeConfig(runtimeOverrides(options));
+      const config = await dependencies.resolveRuntimeConfig(
+        runtimeOverrides(options, dependencies),
+      );
 
-      printJson({
+      dependencies.printJson({
         service: config.service,
         configFile: config.configFile,
         clientId: config.clientId,
-        clientSecret: options.showSecrets ? config.clientSecret : maskSecret(config.clientSecret),
+        clientSecret: options.showSecrets
+          ? config.clientSecret
+          : dependencies.maskSecret(config.clientSecret),
         redirectUri: config.redirectUri,
         scopes: config.scopes,
-        accessToken: options.showSecrets ? config.accessToken : maskSecret(config.accessToken),
+        accessToken: options.showSecrets
+          ? config.accessToken
+          : dependencies.maskSecret(config.accessToken),
         apiBaseUrl: config.apiBaseUrl,
         authBaseUrl: config.authBaseUrl,
       });
@@ -187,19 +279,19 @@ function buildAuthCommands(root: Command): void {
     .description("Remove the stored access token from the config file")
     .action(async (...args: unknown[]) => {
       const command = args.at(-1) as Command;
-      const config = await resolveRuntimeConfig(
-        runtimeOverrides(command.optsWithGlobals<CommonOptions>()),
+      const config = await dependencies.resolveRuntimeConfig(
+        runtimeOverrides(command.optsWithGlobals<CommonOptions>(), dependencies),
       );
-      const stored = await loadStoredConfig(config.configFile);
+      const stored = await dependencies.loadStoredConfig(config.configFile);
 
       delete stored.accessToken;
-      await saveStoredConfig(config.configFile, stored);
+      await dependencies.saveStoredConfig(config.configFile, stored);
 
-      printJson({ ok: true });
+      dependencies.printJson({ ok: true });
     });
 }
 
-function buildConfigCommands(root: Command): void {
+function buildConfigCommands(root: Command, dependencies: CliDependencies): void {
   const config = root.command("config").description("Read and write local CLI config");
 
   config
@@ -211,16 +303,22 @@ function buildConfigCommands(root: Command): void {
       const options = command.optsWithGlobals<CommonOptions>() as CommonOptions & {
         showSecrets?: boolean;
       };
-      const resolved = await resolveRuntimeConfig(runtimeOverrides(options));
+      const resolved = await dependencies.resolveRuntimeConfig(
+        runtimeOverrides(options, dependencies),
+      );
 
-      printJson({
+      dependencies.printJson({
         service: resolved.service,
         configFile: resolved.configFile,
         clientId: resolved.clientId,
-        clientSecret: options.showSecrets ? resolved.clientSecret : maskSecret(resolved.clientSecret),
+        clientSecret: options.showSecrets
+          ? resolved.clientSecret
+          : dependencies.maskSecret(resolved.clientSecret),
         redirectUri: resolved.redirectUri,
         scopes: resolved.scopes,
-        accessToken: options.showSecrets ? resolved.accessToken : maskSecret(resolved.accessToken),
+        accessToken: options.showSecrets
+          ? resolved.accessToken
+          : dependencies.maskSecret(resolved.accessToken),
         apiBaseUrl: resolved.apiBaseUrl,
         authBaseUrl: resolved.authBaseUrl,
       });
@@ -232,8 +330,8 @@ function buildConfigCommands(root: Command): void {
     .action(async (...args: unknown[]) => {
       const command = args.at(-1) as Command;
       const [key, value] = args as [string, string, Command];
-      const runtime = await resolveRuntimeConfig(
-        runtimeOverrides(command.optsWithGlobals<CommonOptions>()),
+      const runtime = await dependencies.resolveRuntimeConfig(
+        runtimeOverrides(command.optsWithGlobals<CommonOptions>(), dependencies),
       );
 
       if (!CONFIG_KEYS.has(key as keyof StoredConfig)) {
@@ -242,13 +340,13 @@ function buildConfigCommands(root: Command): void {
         );
       }
 
-      const stored = await loadStoredConfig(runtime.configFile);
+      const stored = await dependencies.loadStoredConfig(runtime.configFile);
       const normalizedValue =
-        key === "service" ? validateService(value) : value;
+        key === "service" ? dependencies.validateService(value) : value;
       const next = { ...stored, [key]: normalizedValue };
 
-      await saveStoredConfig(runtime.configFile, next);
-      printJson(next);
+      await dependencies.saveStoredConfig(runtime.configFile, next);
+      dependencies.printJson(next);
     });
 
   config
@@ -257,8 +355,8 @@ function buildConfigCommands(root: Command): void {
     .action(async (...args: unknown[]) => {
       const command = args.at(-1) as Command;
       const [key] = args as [string, Command];
-      const runtime = await resolveRuntimeConfig(
-        runtimeOverrides(command.optsWithGlobals<CommonOptions>()),
+      const runtime = await dependencies.resolveRuntimeConfig(
+        runtimeOverrides(command.optsWithGlobals<CommonOptions>(), dependencies),
       );
 
       if (!CONFIG_KEYS.has(key as keyof StoredConfig)) {
@@ -267,15 +365,15 @@ function buildConfigCommands(root: Command): void {
         );
       }
 
-      const stored = await loadStoredConfig(runtime.configFile);
+      const stored = await dependencies.loadStoredConfig(runtime.configFile);
       delete stored[key as keyof StoredConfig];
-      await saveStoredConfig(runtime.configFile, stored);
+      await dependencies.saveStoredConfig(runtime.configFile, stored);
 
-      printJson(stored);
+      dependencies.printJson(stored);
     });
 }
 
-function buildTaskCommands(root: Command): void {
+function buildTaskCommands(root: Command, dependencies: CliDependencies): void {
   const task = root.command("task").description("Task endpoints");
 
   task
@@ -283,7 +381,7 @@ function buildTaskCommands(root: Command): void {
     .description("Get a task by project id and task id")
     .action(async (...args: unknown[]) => {
       const [projectId, taskId] = args as [string, string, Command];
-      await runClientCommand(args, (client) => client.getTask(projectId, taskId));
+      await runClientCommand(args, dependencies, (client) => client.getTask(projectId, taskId));
     });
 
   withJsonBody(
@@ -320,25 +418,29 @@ function buildTaskCommands(root: Command): void {
         }
     >();
 
-    const payload = (await loadObjectPayload(options, {
-      projectId: options.projectId,
-      title: options.title,
-      content: options.content,
-      desc: options.desc,
-      startDate: options.startDate,
-      dueDate: options.dueDate,
-      timeZone: options.timeZone,
-      repeatFlag: options.repeatFlag,
-      priority: options.priority,
-      sortOrder: options.sortOrder,
-      isAllDay: options.allDay,
-    })) as Partial<Task>;
+    const payload = (await loadObjectPayload(
+      options,
+      {
+        projectId: options.projectId,
+        title: options.title,
+        content: options.content,
+        desc: options.desc,
+        startDate: options.startDate,
+        dueDate: options.dueDate,
+        timeZone: options.timeZone,
+        repeatFlag: options.repeatFlag,
+        priority: options.priority,
+        sortOrder: options.sortOrder,
+        isAllDay: options.allDay,
+      },
+      dependencies,
+    )) as Partial<Task>;
 
     if (!payload.projectId || !payload.title) {
       throw new Error("Task creation requires both projectId and title.");
     }
 
-    await runClientCommand(args, (client) => client.createTask(payload));
+    await runClientCommand(args, dependencies, (client) => client.createTask(payload));
   });
 
   withJsonBody(
@@ -376,20 +478,24 @@ function buildTaskCommands(root: Command): void {
         }
     >();
 
-    const payload = (await loadObjectPayload(options, {
-      id: taskId,
-      projectId: options.projectId,
-      title: options.title,
-      content: options.content,
-      desc: options.desc,
-      startDate: options.startDate,
-      dueDate: options.dueDate,
-      timeZone: options.timeZone,
-      repeatFlag: options.repeatFlag,
-      priority: options.priority,
-      sortOrder: options.sortOrder,
-      isAllDay: options.allDay,
-    })) as Partial<Task>;
+    const payload = (await loadObjectPayload(
+      options,
+      {
+        id: taskId,
+        projectId: options.projectId,
+        title: options.title,
+        content: options.content,
+        desc: options.desc,
+        startDate: options.startDate,
+        dueDate: options.dueDate,
+        timeZone: options.timeZone,
+        repeatFlag: options.repeatFlag,
+        priority: options.priority,
+        sortOrder: options.sortOrder,
+        isAllDay: options.allDay,
+      },
+      dependencies,
+    )) as Partial<Task>;
 
     payload.id = taskId;
 
@@ -397,7 +503,7 @@ function buildTaskCommands(root: Command): void {
       throw new Error("Task update requires projectId.");
     }
 
-    await runClientCommand(args, (client) => client.updateTask(taskId, payload));
+    await runClientCommand(args, dependencies, (client) => client.updateTask(taskId, payload));
   });
 
   task
@@ -405,7 +511,9 @@ function buildTaskCommands(root: Command): void {
     .description("Complete a task")
     .action(async (...args: unknown[]) => {
       const [projectId, taskId] = args as [string, string, Command];
-      await runClientCommand(args, (client) => client.completeTask(projectId, taskId));
+      await runClientCommand(args, dependencies, (client) =>
+        client.completeTask(projectId, taskId),
+      );
     });
 
   task
@@ -413,7 +521,9 @@ function buildTaskCommands(root: Command): void {
     .description("Delete a task")
     .action(async (...args: unknown[]) => {
       const [projectId, taskId] = args as [string, string, Command];
-      await runClientCommand(args, (client) => client.deleteTask(projectId, taskId));
+      await runClientCommand(args, dependencies, (client) =>
+        client.deleteTask(projectId, taskId),
+      );
     });
 
   withJsonBody(
@@ -434,9 +544,10 @@ function buildTaskCommands(root: Command): void {
         }
     >();
 
-    let payload = (await loadJsonValue(options.json, options.jsonFile)) as
-      | MoveTaskOperation[]
-      | undefined;
+    let payload = (await dependencies.loadJsonValue(
+      options.json,
+      options.jsonFile,
+    )) as MoveTaskOperation[] | undefined;
 
     if (!payload) {
       if (!options.fromProjectId || !options.toProjectId || !options.taskId) {
@@ -458,7 +569,7 @@ function buildTaskCommands(root: Command): void {
       throw new Error("Move payload must be a JSON array.");
     }
 
-    await runClientCommand(args, (client) => client.moveTasks(payload));
+    await runClientCommand(args, dependencies, (client) => client.moveTasks(payload));
   });
 
   withJsonBody(
@@ -479,13 +590,18 @@ function buildTaskCommands(root: Command): void {
         }
     >();
 
-    const payload = (await loadObjectPayload(options, {
-      projectIds: options.projectId && options.projectId.length > 0 ? options.projectId : undefined,
-      startDate: options.startDate,
-      endDate: options.endDate,
-    })) as CompletedTasksFilter;
+    const payload = (await loadObjectPayload(
+      options,
+      {
+        projectIds:
+          options.projectId && options.projectId.length > 0 ? options.projectId : undefined,
+        startDate: options.startDate,
+        endDate: options.endDate,
+      },
+      dependencies,
+    )) as CompletedTasksFilter;
 
-    await runClientCommand(args, (client) => client.listCompletedTasks(payload));
+    await runClientCommand(args, dependencies, (client) => client.listCompletedTasks(payload));
   });
 
   withJsonBody(
@@ -512,27 +628,33 @@ function buildTaskCommands(root: Command): void {
         }
     >();
 
-    const payload = (await loadObjectPayload(options, {
-      projectIds: options.projectId && options.projectId.length > 0 ? options.projectId : undefined,
-      startDate: options.startDate,
-      endDate: options.endDate,
-      priority: options.priority && options.priority.length > 0 ? options.priority : undefined,
-      tag: options.tag && options.tag.length > 0 ? options.tag : undefined,
-      status: options.status && options.status.length > 0 ? options.status : undefined,
-    })) as FilterTasksRequest;
+    const payload = (await loadObjectPayload(
+      options,
+      {
+        projectIds:
+          options.projectId && options.projectId.length > 0 ? options.projectId : undefined,
+        startDate: options.startDate,
+        endDate: options.endDate,
+        priority:
+          options.priority && options.priority.length > 0 ? options.priority : undefined,
+        tag: options.tag && options.tag.length > 0 ? options.tag : undefined,
+        status: options.status && options.status.length > 0 ? options.status : undefined,
+      },
+      dependencies,
+    )) as FilterTasksRequest;
 
-    await runClientCommand(args, (client) => client.filterTasks(payload));
+    await runClientCommand(args, dependencies, (client) => client.filterTasks(payload));
   });
 }
 
-function buildProjectCommands(root: Command): void {
+function buildProjectCommands(root: Command, dependencies: CliDependencies): void {
   const project = root.command("project").description("Project endpoints");
 
   project
     .command("list")
     .description("List user projects")
     .action(async (...args: unknown[]) => {
-      await runClientCommand(args, (client) => client.listProjects());
+      await runClientCommand(args, dependencies, (client) => client.listProjects());
     });
 
   project
@@ -540,7 +662,7 @@ function buildProjectCommands(root: Command): void {
     .description("Get a project by id")
     .action(async (...args: unknown[]) => {
       const [projectId] = args as [string, Command];
-      await runClientCommand(args, (client) => client.getProject(projectId));
+      await runClientCommand(args, dependencies, (client) => client.getProject(projectId));
     });
 
   project
@@ -548,7 +670,7 @@ function buildProjectCommands(root: Command): void {
     .description("Get a project together with tasks and columns")
     .action(async (...args: unknown[]) => {
       const [projectId] = args as [string, Command];
-      await runClientCommand(args, (client) => client.getProjectData(projectId));
+      await runClientCommand(args, dependencies, (client) => client.getProjectData(projectId));
     });
 
   withJsonBody(
@@ -573,19 +695,23 @@ function buildProjectCommands(root: Command): void {
         }
     >();
 
-    const payload = (await loadObjectPayload(options, {
-      name: options.name,
-      color: options.color,
-      sortOrder: options.sortOrder,
-      viewMode: options.viewMode,
-      kind: options.kind,
-    })) as Partial<Project>;
+    const payload = (await loadObjectPayload(
+      options,
+      {
+        name: options.name,
+        color: options.color,
+        sortOrder: options.sortOrder,
+        viewMode: options.viewMode,
+        kind: options.kind,
+      },
+      dependencies,
+    )) as Partial<Project>;
 
     if (!payload.name) {
       throw new Error("Project creation requires name.");
     }
 
-    await runClientCommand(args, (client) => client.createProject(payload));
+    await runClientCommand(args, dependencies, (client) => client.createProject(payload));
   });
 
   withJsonBody(
@@ -611,15 +737,21 @@ function buildProjectCommands(root: Command): void {
         }
     >();
 
-    const payload = (await loadObjectPayload(options, {
-      name: options.name,
-      color: options.color,
-      sortOrder: options.sortOrder,
-      viewMode: options.viewMode,
-      kind: options.kind,
-    })) as Partial<Project>;
+    const payload = (await loadObjectPayload(
+      options,
+      {
+        name: options.name,
+        color: options.color,
+        sortOrder: options.sortOrder,
+        viewMode: options.viewMode,
+        kind: options.kind,
+      },
+      dependencies,
+    )) as Partial<Project>;
 
-    await runClientCommand(args, (client) => client.updateProject(projectId, payload));
+    await runClientCommand(args, dependencies, (client) =>
+      client.updateProject(projectId, payload),
+    );
   });
 
   project
@@ -627,11 +759,11 @@ function buildProjectCommands(root: Command): void {
     .description("Delete a project")
     .action(async (...args: unknown[]) => {
       const [projectId] = args as [string, Command];
-      await runClientCommand(args, (client) => client.deleteProject(projectId));
+      await runClientCommand(args, dependencies, (client) => client.deleteProject(projectId));
     });
 }
 
-function buildRequestCommand(root: Command): void {
+function buildRequestCommand(root: Command, dependencies: CliDependencies): void {
   withJsonBody(
     root
       .command("request <method> <path>")
@@ -647,17 +779,16 @@ function buildRequestCommand(root: Command): void {
         }
     >();
 
-    const config = await resolveRuntimeConfig(runtimeOverrides(options));
-    const client = new TickTickClient(config);
-    const body = await loadJsonValue(options.json, options.jsonFile);
-    const result = await client.requestRaw(
-      method.toUpperCase(),
-      path,
-      body,
-      { auth: options.auth },
+    const config = await dependencies.resolveRuntimeConfig(
+      runtimeOverrides(options, dependencies),
     );
+    const client = dependencies.createClient(config);
+    const body = await dependencies.loadJsonValue(options.json, options.jsonFile);
+    const result = await client.requestRaw(method.toUpperCase(), path, body, {
+      auth: options.auth,
+    });
 
-    printJson(result ?? { ok: true });
+    dependencies.printJson(result ?? { ok: true });
   });
 }
 
@@ -667,10 +798,13 @@ function withJsonBody(command: Command): Command {
     .option("--json-file <path>", "Path to a JSON body file");
 }
 
-function runtimeOverrides(options: CommonOptions) {
+function runtimeOverrides(
+  options: CommonOptions,
+  dependencies: Pick<CliDependencies, "validateService">,
+) {
   return {
     configFile: options.configFile,
-    service: options.service ? validateService(options.service) : undefined,
+    service: options.service ? dependencies.validateService(options.service) : undefined,
     apiBaseUrl: options.apiBaseUrl,
     authBaseUrl: options.authBaseUrl,
     accessToken: options.accessToken,
@@ -683,33 +817,35 @@ function runtimeOverrides(options: CommonOptions) {
 
 async function runClientCommand(
   args: unknown[],
-  runner: (client: TickTickClient, config: RuntimeConfig) => Promise<unknown>,
+  dependencies: CliDependencies,
+  runner: (client: TickTickClientLike, config: RuntimeConfig) => Promise<unknown>,
 ): Promise<void> {
   const command = args.at(-1) as Command;
-  const config = await resolveRuntimeConfig(
-    runtimeOverrides(command.optsWithGlobals<CommonOptions>()),
+  const config = await dependencies.resolveRuntimeConfig(
+    runtimeOverrides(command.optsWithGlobals<CommonOptions>(), dependencies),
   );
-  const client = new TickTickClient(config);
+  const client = dependencies.createClient(config);
   const result = await runner(client, config);
 
-  printJson(result ?? { ok: true });
+  dependencies.printJson(result ?? { ok: true });
 }
 
 async function loadObjectPayload(
   options: JsonOptions,
   flags: Record<string, unknown>,
+  dependencies: Pick<CliDependencies, "loadJsonValue" | "mergeDefined">,
 ): Promise<Record<string, unknown>> {
-  const loaded = await loadJsonValue(options.json, options.jsonFile);
+  const loaded = await dependencies.loadJsonValue(options.json, options.jsonFile);
 
   if (loaded === undefined) {
-    return mergeDefined({}, flags);
+    return dependencies.mergeDefined({}, flags);
   }
 
   if (!isPlainObject(loaded)) {
     throw new Error("Expected a JSON object payload.");
   }
 
-  return mergeDefined(loaded, flags);
+  return dependencies.mergeDefined(loaded, flags);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -718,9 +854,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 async function persistConfig(
   runtime: RuntimeConfig,
-  accessToken?: string,
+  token: TokenResponse,
+  dependencies: Pick<CliDependencies, "loadStoredConfig" | "saveStoredConfig">,
 ): Promise<void> {
-  const stored = await loadStoredConfig(runtime.configFile);
+  const stored = await dependencies.loadStoredConfig(runtime.configFile);
   const next: StoredConfig = {
     ...stored,
     service: runtime.service,
@@ -730,10 +867,10 @@ async function persistConfig(
     scopes: runtime.scopes,
     apiBaseUrl: runtime.apiBaseUrl,
     authBaseUrl: runtime.authBaseUrl,
-    accessToken,
+    accessToken: token.access_token,
   };
 
-  await saveStoredConfig(runtime.configFile, next);
+  await dependencies.saveStoredConfig(runtime.configFile, next);
 }
 
 function requireClientCredentials(config: RuntimeConfig): void {
@@ -758,10 +895,4 @@ function collectString(value: string, previous: string[] = []): string[] {
 
 function collectInteger(value: string, previous: number[] = []): number[] {
   return [...previous, parseInteger(value)];
-}
-
-function handleError(error: unknown): void {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
 }
