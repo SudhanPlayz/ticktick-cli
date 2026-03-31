@@ -183,7 +183,7 @@ export async function openBrowserWith(
 
   try {
     if (platform === "win32") {
-      await run("cmd", ["/c", "start", "", url]);
+      await run("rundll32", ["url.dll,FileProtocolHandler", url]);
       return;
     }
 

@@ -190,10 +190,12 @@ function buildAuthCommands(root: Command, dependencies: CliDependencies): void {
     .command("login")
     .description("Open the OAuth flow, exchange the code, and store the access token")
     .option("--timeout-ms <number>", "Timeout while waiting for the callback", parseInteger, 120000)
+    .option("--show-secrets", "Include access token and refresh token in the output")
     .action(async (...args: unknown[]) => {
       const command = args.at(-1) as Command;
       const options = command.optsWithGlobals<CommonOptions>() as CommonOptions & {
         timeoutMs: number;
+        showSecrets?: boolean;
       };
 
       const config = await dependencies.resolveRuntimeConfig(
@@ -213,6 +215,7 @@ function buildAuthCommands(root: Command, dependencies: CliDependencies): void {
         return;
       }
 
+      dependencies.stderr(`Waiting for OAuth callback on ${config.redirectUri}...\n`);
       const codePromise = dependencies.waitForOAuthCode(
         config.redirectUri!,
         state,
@@ -224,17 +227,21 @@ function buildAuthCommands(root: Command, dependencies: CliDependencies): void {
       const token = await dependencies.exchangeAuthorizationCode(config, code);
       await persistConfig(config, token, dependencies);
 
-      dependencies.printJson(token);
+      dependencies.printJson(formatAuthSuccess(config, token, options.showSecrets, dependencies));
     });
 
   auth
     .command("exchange <code>")
     .description("Exchange an authorization code for an access token")
+    .option("--show-secrets", "Include access token and refresh token in the output")
     .action(async (...args: unknown[]) => {
       const command = args.at(-1) as Command;
       const [code] = args as [string, Command];
+      const options = command.optsWithGlobals<CommonOptions>() as CommonOptions & {
+        showSecrets?: boolean;
+      };
       const config = await dependencies.resolveRuntimeConfig(
-        runtimeOverrides(command.optsWithGlobals<CommonOptions>(), dependencies),
+        runtimeOverrides(options, dependencies),
       );
 
       requireClientCredentials(config);
@@ -242,7 +249,7 @@ function buildAuthCommands(root: Command, dependencies: CliDependencies): void {
       const token = await dependencies.exchangeAuthorizationCode(config, code);
       await persistConfig(config, token, dependencies);
 
-      dependencies.printJson(token);
+      dependencies.printJson(formatAuthSuccess(config, token, options.showSecrets, dependencies));
     });
 
   auth
@@ -872,6 +879,32 @@ async function persistConfig(
   };
 
   await dependencies.saveStoredConfig(runtime.configFile, next);
+}
+
+function formatAuthSuccess(
+  runtime: RuntimeConfig,
+  token: TokenResponse,
+  showSecrets: boolean | undefined,
+  dependencies: Pick<CliDependencies, "maskSecret">,
+) {
+  return {
+    ok: true,
+    message: "Authorization complete.",
+    service: runtime.service,
+    configFile: runtime.configFile,
+    redirectUri: runtime.redirectUri,
+    scope: token.scope ?? runtime.scopes,
+    tokenType: token.token_type,
+    expiresIn: token.expires_in,
+    accessToken: showSecrets
+      ? token.access_token
+      : dependencies.maskSecret(token.access_token),
+    refreshToken: token.refresh_token
+      ? showSecrets
+        ? token.refresh_token
+        : dependencies.maskSecret(token.refresh_token)
+      : undefined,
+  };
 }
 
 function requireClientCredentials(config: RuntimeConfig): void {

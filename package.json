@@ -1,6 +1,6 @@
 {
   "name": "ticktick-cli",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "CLI wrapper for the TickTick Open API",
   "type": "module",
   "files": [

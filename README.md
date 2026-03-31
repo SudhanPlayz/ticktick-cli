@@ -100,6 +100,8 @@ Interactive login:
 ticktick auth login
 ```
 
+Successful auth stores the token in your local config file and masks secrets in the terminal output by default.
+
 If you already have an authorization code:
 
 ```bash
@@ -117,6 +119,8 @@ Check current auth state:
 ```bash
 ticktick auth status
 ```
+
+If you need the raw token values in the terminal, add `--show-secrets` to `auth login`, `auth exchange`, or `auth status`.
 
 Clear the stored access token:
 
