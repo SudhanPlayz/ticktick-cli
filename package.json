@@ -1,0 +1,45 @@
+{
+  "name": "ticktick-cli",
+  "version": "0.1.2",
+  "description": "Simple CLI wrapper for the TickTick Open API",
+  "type": "module",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "ticktick": "dist/cli.js",
+    "tt": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "check": "npm run build",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "dev": "tsx src/cli.ts",
+    "prepack": "npm run test",
+    "test": "npm run build && node --import tsx --test src/test/*.test.ts"
+  },
+  "keywords": [
+    "ticktick",
+    "cli",
+    "oauth2",
+    "tasks",
+    "projects"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "commander": "^14.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.3"
+  }
+}
