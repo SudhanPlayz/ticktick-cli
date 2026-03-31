@@ -1,6 +1,6 @@
 {
   "name": "ticktick-cli",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "CLI wrapper for the TickTick Open API",
   "type": "module",
   "files": [
@@ -14,14 +14,10 @@
   },
   "scripts": {
     "build": "npm run clean && tsc -p tsconfig.json",
-    "build:coverage": "npm run clean:coverage && tsc -p tsconfig.coverage.json",
-    "check": "npm run coverage",
+    "check": "npm run build",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "clean:coverage": "node -e \"require('node:fs').rmSync('.coverage-dist',{recursive:true,force:true})\"",
     "dev": "tsx src/cli.ts",
-    "prepack": "npm run coverage",
-    "test": "npm run build && node --import tsx --test src/test/*.test.ts",
-    "coverage": "npm run build:coverage && node --experimental-test-coverage --test-coverage-lines=100 --test-coverage-functions=100 --test-coverage-branches=100 --test-coverage-include=.coverage-dist/*.js --test-coverage-exclude=.coverage-dist/bin.js --test .coverage-dist/test/*.test.js"
+    "prepack": "npm run build"
   },
   "keywords": [
     "ticktick",

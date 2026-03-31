@@ -1,6 +1,5 @@
 node_modules/
 dist/
-.coverage-dist/
 .DS_Store
 Thumbs.db
 *.log

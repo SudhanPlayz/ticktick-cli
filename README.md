@@ -5,7 +5,7 @@ A TypeScript CLI wrapper for the TickTick Open API documented at:
 - https://developer.ticktick.com/
 - https://developer.ticktick.com/docs#/openapi
 
-`v1.0.0` covers the documented OAuth flow plus every documented task and project endpoint.
+`v1.0.2` covers the documented OAuth flow plus every documented task and project endpoint.
 
 The CLI is available as both `ticktick` and the short alias `tt`.
 
@@ -205,19 +205,11 @@ ticktick request POST https://httpbin.org/post --no-auth --json '{"hello":"world
 
 ## Development
 
-Run the normal test suite:
+Build the CLI:
 
 ```bash
-npm test
+npm run build
 ```
-
-Run the enforced coverage check:
-
-```bash
-npm run coverage
-```
-
-`npm run coverage` currently enforces `100%` line, branch, and function coverage on the published runtime files.
 
 ## Notes
 

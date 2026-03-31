@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { pathToFileURL } from "node:url";
 
 import {
   buildAuthorizationUrl,
@@ -895,4 +896,12 @@ function collectString(value: string, previous: string[] = []): string[] {
 
 function collectInteger(value: string, previous: number[] = []): number[] {
   return [...previous, parseInteger(value)];
+}
+
+function isDirectExecution(): boolean {
+  return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]!).href;
+}
+
+if (isDirectExecution()) {
+  await main();
 }
