@@ -23,6 +23,7 @@ import type {
   RuntimeConfig,
   StoredConfig,
   Task,
+  TaskWithProject,
   TokenResponse,
 } from "./types.js";
 import {
@@ -51,6 +52,33 @@ type JsonOptions = {
   jsonFile?: string;
 };
 
+type DailyCommandOptions = CommonOptions & {
+  json?: boolean;
+};
+
+type DueTask = {
+  task: TaskWithProject;
+  dueAt: Date;
+};
+
+type TodayDueTaskView = {
+  overdue: DueTask[];
+  today: DueTask[];
+};
+
+type TodayTaskView = {
+  overdue: TaskWithProject[];
+  today: TaskWithProject[];
+};
+
+type DueTaskListView = {
+  tasks: DueTask[];
+};
+
+type TaskListView = {
+  tasks: TaskWithProject[];
+};
+
 type TickTickClientLike = Pick<
   TickTickClient,
   | "getTask"
@@ -61,6 +89,7 @@ type TickTickClientLike = Pick<
   | "moveTasks"
   | "listCompletedTasks"
   | "filterTasks"
+  | "listOpenTasksWithProjects"
   | "listProjects"
   | "getProject"
   | "getProjectData"
@@ -137,6 +166,7 @@ export function createProgram(
 
   buildAuthCommands(program, dependencies);
   buildConfigCommands(program, dependencies);
+  buildDailyCommands(program, dependencies);
   buildTaskCommands(program, dependencies);
   buildProjectCommands(program, dependencies);
   buildRequestCommand(program, dependencies);
@@ -381,8 +411,234 @@ function buildConfigCommands(root: Command, dependencies: CliDependencies): void
     });
 }
 
+function buildDailyCommands(root: Command, dependencies: CliDependencies): void {
+  buildDailyCommandSet(root, dependencies);
+}
+
+function buildDailyCommandSet(root: Command, dependencies: CliDependencies): void {
+  root
+    .command("today")
+    .description("Show overdue tasks and tasks due today")
+    .option("--json", "Print structured JSON")
+    .action(async (...args: unknown[]) => {
+      await runDailyCommand(args, dependencies, "today");
+    });
+
+  root
+    .command("overdue")
+    .description("Show overdue open tasks")
+    .option("--json", "Print structured JSON")
+    .action(async (...args: unknown[]) => {
+      await runDailyCommand(args, dependencies, "overdue");
+    });
+
+  root
+    .command("next")
+    .description("Show the next 10 upcoming tasks after today")
+    .option("--json", "Print structured JSON")
+    .action(async (...args: unknown[]) => {
+      await runDailyCommand(args, dependencies, "next");
+    });
+}
+
+async function runDailyCommand(
+  args: unknown[],
+  dependencies: CliDependencies,
+  mode: "today" | "overdue" | "next",
+): Promise<void> {
+  const command = args.at(-1) as Command;
+  const options = command.optsWithGlobals<DailyCommandOptions>();
+  const config = await dependencies.resolveRuntimeConfig(
+    runtimeOverrides(options, dependencies),
+  );
+  const client = dependencies.createClient(config);
+  const tasks = await client.listOpenTasksWithProjects();
+  const dueTasks = collectDueTasks(tasks);
+  const bounds = localDayBounds();
+
+  if (mode === "today") {
+    const view = buildTodayDueTaskView(dueTasks, bounds.start, bounds.end);
+
+    if (options.json) {
+      dependencies.printJson({
+        overdue: view.overdue.map(({ task }) => task),
+        today: view.today.map(({ task }) => task),
+      } satisfies TodayTaskView);
+      return;
+    }
+
+    printTaskSection("Overdue", view.overdue, "No overdue tasks.");
+    process.stdout.write("\n");
+    printTaskSection("Today", view.today, "Nothing due today.");
+    return;
+  }
+
+  const tasksView =
+    mode === "overdue"
+      ? buildOverdueDueTaskView(dueTasks, bounds.start)
+      : buildNextDueTaskView(dueTasks, bounds.end, 10);
+
+  if (options.json) {
+    dependencies.printJson({
+      tasks: tasksView.tasks.map(({ task }) => task),
+    } satisfies TaskListView);
+    return;
+  }
+
+  if (mode === "overdue") {
+    printTaskSection("Overdue", tasksView.tasks, "No overdue tasks.");
+    return;
+  }
+
+  printTaskSection("Next", tasksView.tasks, "No upcoming tasks after today.");
+}
+
+function buildTodayDueTaskView(
+  tasks: DueTask[],
+  dayStart: Date,
+  nextDayStart: Date,
+): TodayDueTaskView {
+  return {
+    overdue: tasks.filter(({ dueAt }) => dueAt.getTime() < dayStart.getTime()),
+    today: tasks.filter(
+      ({ dueAt }) =>
+        dueAt.getTime() >= dayStart.getTime() && dueAt.getTime() < nextDayStart.getTime(),
+    ),
+  };
+}
+
+function buildOverdueDueTaskView(tasks: DueTask[], dayStart: Date): DueTaskListView {
+  return {
+    tasks: tasks.filter(({ dueAt }) => dueAt.getTime() < dayStart.getTime()),
+  };
+}
+
+function buildNextDueTaskView(
+  tasks: DueTask[],
+  nextDayStart: Date,
+  limit: number,
+): DueTaskListView {
+  return {
+    tasks: tasks
+      .filter(({ dueAt }) => dueAt.getTime() >= nextDayStart.getTime())
+      .slice(0, limit),
+  };
+}
+
+function collectDueTasks(tasks: TaskWithProject[]): DueTask[] {
+  return tasks
+    .flatMap((task) => {
+      const dueAt = parseTickTickDate(task.dueDate);
+      return dueAt ? [{ task, dueAt }] : [];
+    })
+    .sort(compareDueTasks);
+}
+
+function compareDueTasks(left: DueTask, right: DueTask): number {
+  const dueTimeDelta = left.dueAt.getTime() - right.dueAt.getTime();
+
+  if (dueTimeDelta !== 0) {
+    return dueTimeDelta;
+  }
+
+  const priorityDelta = (right.task.priority ?? 0) - (left.task.priority ?? 0);
+
+  if (priorityDelta !== 0) {
+    return priorityDelta;
+  }
+
+  return (left.task.title ?? "").localeCompare(right.task.title ?? "");
+}
+
+function parseTickTickDate(value?: string): Date | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.replace(/([+-]\d{2})(\d{2})$/, "$1:$2");
+  const parsed = new Date(normalized);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
+function localDayBounds(reference: Date = new Date()): { start: Date; end: Date } {
+  const start = new Date(reference);
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+
+  return { start, end };
+}
+
+function printTaskSection(
+  title: string,
+  tasks: DueTask[],
+  emptyMessage: string,
+): void {
+  process.stdout.write(`${title} (${tasks.length})\n`);
+
+  if (tasks.length === 0) {
+    process.stdout.write(`${emptyMessage}\n`);
+    return;
+  }
+
+  for (const entry of tasks) {
+    process.stdout.write(`${formatTaskLine(entry)}\n`);
+  }
+}
+
+function formatTaskLine(entry: DueTask): string {
+  const title = entry.task.title?.trim() || "(Untitled task)";
+  const projectName = entry.task.projectName?.trim() || entry.task.projectId || "Unknown project";
+  return `- ${title} [${projectName}] - ${formatDueLabel(entry)}`;
+}
+
+function formatDueLabel(entry: DueTask): string {
+  const bounds = localDayBounds();
+  const due = entry.dueAt;
+  const dayKey = dueDayKey(due);
+  const todayKey = dueDayKey(bounds.start);
+
+  const yesterday = new Date(bounds.start);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = dueDayKey(yesterday);
+
+  const baseLabel =
+    dayKey === todayKey
+      ? "Today"
+      : dayKey === yesterdayKey
+        ? "Yesterday"
+        : new Intl.DateTimeFormat(undefined, {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+          }).format(due);
+
+  if (entry.task.isAllDay) {
+    return `${baseLabel} (all day)`;
+  }
+
+  const timeLabel = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(due);
+
+  return `${baseLabel} ${timeLabel}`;
+}
+
+function dueDayKey(value: Date): string {
+  return `${value.getFullYear()}-${value.getMonth()}-${value.getDate()}`;
+}
+
 function buildTaskCommands(root: Command, dependencies: CliDependencies): void {
-  const task = root.command("task").description("Task endpoints");
+  const task = root.command("task").description("Task endpoints and daily task views");
+
+  buildDailyCommandSet(task, dependencies);
 
   task
     .command("get <projectId> <taskId>")

@@ -7,6 +7,7 @@ import type {
   ProjectData,
   RuntimeConfig,
   Task,
+  TaskWithProject,
 } from "./types.js";
 
 export class TickTickApiError extends Error {
@@ -118,6 +119,42 @@ export class TickTickClient {
     return this.requestRaw<Task[]>("POST", "/open/v1/task/filter", payload);
   }
 
+  async listOpenTasksWithProjects(): Promise<TaskWithProject[]> {
+    const tasks = ((await this.filterTasks({ status: [0] })) ?? []).filter(isOpenTask);
+    const projectNames = new Map<string, string>();
+    const projects = (await this.listProjects()) ?? [];
+
+    for (const project of projects) {
+      if (project.id && project.name) {
+        projectNames.set(project.id, project.name);
+      }
+    }
+
+    const missingProjectIds = Array.from(
+      new Set(
+        tasks
+          .map((task) => task.projectId)
+          .filter((projectId): projectId is string => Boolean(projectId && !projectNames.has(projectId))),
+      ),
+    );
+
+    await Promise.all(
+      missingProjectIds.map(async (projectId) => {
+        const data = await this.getProjectData(projectId);
+        const projectName = data?.project?.name ?? inferProjectName(projectId);
+
+        if (projectName) {
+          projectNames.set(projectId, projectName);
+        }
+      }),
+    );
+
+    return tasks.map((task) => ({
+      ...task,
+      projectName: task.projectId ? projectNames.get(task.projectId) ?? inferProjectName(task.projectId) : undefined,
+    }));
+  }
+
   listProjects() {
     return this.requestRaw<Project[]>("GET", "/open/v1/project");
   }
@@ -149,4 +186,20 @@ function tryParseJson(value: string): unknown {
   } catch {
     return value;
   }
+}
+
+function isOpenTask(task: Task): boolean {
+  return !task.completedTime && task.status !== 2;
+}
+
+function inferProjectName(projectId?: string): string | undefined {
+  if (!projectId) {
+    return undefined;
+  }
+
+  if (projectId.startsWith("inbox")) {
+    return "Inbox";
+  }
+
+  return undefined;
 }

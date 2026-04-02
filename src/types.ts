@@ -32,6 +32,10 @@ export interface Task {
   etag?: string;
 }
 
+export interface TaskWithProject extends Task {
+  projectName?: string;
+}
+
 export interface Project {
   id?: string;
   name?: string;

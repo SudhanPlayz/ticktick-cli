@@ -5,7 +5,7 @@ A TypeScript CLI wrapper for the TickTick Open API documented at:
 - https://developer.ticktick.com/
 - https://developer.ticktick.com/docs#/openapi
 
-`v1.0.2` covers the documented OAuth flow plus every documented task and project endpoint.
+`v1` covers the documented OAuth flow plus every documented task and project endpoint.
 
 The CLI is available as both `ticktick` and the short alias `tt`.
 
@@ -13,6 +13,7 @@ The CLI is available as both `ticktick` and the short alias `tt`.
 
 - OAuth authorization code flow
 - OAuth authorize URL generation
+- Daily commands for `today`, `overdue`, and `next`
 - Get, create, update, complete, delete, move, list-completed, and filter task endpoints
 - List, get, create, update, delete, and get-data project endpoints
 - Raw authenticated request passthrough
@@ -129,6 +130,18 @@ ticktick auth logout
 ```
 
 ## Examples
+
+Daily task views:
+
+```bash
+ticktick today
+tt today
+ticktick overdue
+ticktick next
+ticktick task today --json
+```
+
+`today` includes both overdue tasks and tasks due today, with overdue shown first.
 
 List projects:
 
